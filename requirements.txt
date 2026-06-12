@@ -1,0 +1,8 @@
+PySide6
+httpx
+pywin32
+keyring
+pytest
+pytest-qt
+respx
+pyinstaller

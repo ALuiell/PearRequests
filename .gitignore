@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+
+.idea/
+
+config.json
+search_test.json
+
+dist/
+build/
