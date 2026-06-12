@@ -18,7 +18,7 @@ def main():
     os.environ["QT_QPA_PLATFORM"] = "windows:darkmode=1"
 
     setup_logging(logging.INFO)
-    logger.info("Starting Twitch Pear Song Requests...")
+    logger.info("Starting PearSongBot...")
 
     config = load_config()
 

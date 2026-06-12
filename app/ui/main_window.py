@@ -37,7 +37,7 @@ class MainWindow(QMainWindow):
         self.pear_worker = pear_worker
         self.song_srv = song_srv
         
-        self.setWindowTitle("Twitch Pear Song Requests")
+        self.setWindowTitle("PearSongBot")
         self.resize(800, 550)
         
         # Load stylesheet with checkmark SVG

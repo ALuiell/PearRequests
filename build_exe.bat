@@ -15,10 +15,10 @@ if %errorlevel% neq 0 (
 echo.
 echo Running PyInstaller...
 :: --noconfirm: overwrite existing build directories
-:: --onedir: create a 1-folder bundle containing the executable
+:: --onefile: create a single executable file instead of a directory
 :: --windowed: do not provide a console window for standard i/o
 :: --add-data "SOURCE;DEST": bundle the SVG file so it's available in the final exe
-pyinstaller --noconfirm --onedir --windowed --add-data "app/ui/checkmark.svg;app/ui" --name "TwitchPearSongRequests" main.py
+pyinstaller --noconfirm --onefile --windowed --icon="icon.ico" --add-data "app/ui/checkmark.svg;app/ui" --name "PearSongBot" main.py
 
 if %errorlevel% neq 0 (
     echo.
@@ -30,6 +30,6 @@ if %errorlevel% neq 0 (
 echo.
 echo =========================================
 echo Build Complete!
-echo You can find the built program in the "dist\TwitchPearSongRequests" folder.
+echo You can find the built program in the "dist\PearSongBot" folder.
 echo =========================================
 pause
