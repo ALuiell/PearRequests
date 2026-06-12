@@ -50,6 +50,7 @@ class SongRequestService(QObject):
         self.last_queue_data: dict | None = None
         self.current_song_video_id: str | None = None
         self.pending_dispatch_request_id: str | None = None
+        self.prepared_video_id: str | None = None
 
     @Slot(object)
     def handle_chat_message(self, msg: ChatMessage):
@@ -154,13 +155,14 @@ class SongRequestService(QObject):
     def handle_pear_success(self, request_id: str, result: dict):
         if request_id == self.pending_dispatch_request_id:
             self.pending_dispatch_request_id = None
+            self.prepared_video_id = result.get("videoId") or self.prepared_video_id
             self.log_message.emit("debug", f"Dispatched viewer track {result.get('videoId', '')}")
-            self._dispatch_next_viewer_track()
 
     @Slot(str, str)
     def handle_pear_failure(self, request_id: str, error: str):
         if request_id == self.pending_dispatch_request_id:
             self.pending_dispatch_request_id = None
+            self.prepared_video_id = None
             self.log_message.emit("warning", f"Failed to dispatch viewer track: {error}")
 
     @Slot(str, str)
@@ -197,6 +199,8 @@ class SongRequestService(QObject):
     @Slot(object)
     def observe_queue_updated(self, queue_data: object):
         self.last_queue_data = queue_data if isinstance(queue_data, dict) else None
+        if self.prepared_video_id and self._find_video_index_in_pear_queue(self.prepared_video_id) is not None:
+            self.prepared_video_id = None
         self._dispatch_next_viewer_track()
 
     @Slot(dict)
@@ -207,6 +211,8 @@ class SongRequestService(QObject):
         if self.viewer_queue and self.current_song_video_id and self.current_song_video_id != previous_video_id:
             if self.viewer_queue[0].video_id == self.current_song_video_id:
                 started = self.viewer_queue.pop(0)
+                if self.prepared_video_id == started.video_id:
+                    self.prepared_video_id = None
                 self.log_message.emit("info", f"Viewer track started: {started.video_id} for {started.user_login}")
 
         self._dispatch_next_viewer_track()
@@ -229,12 +235,14 @@ class SongRequestService(QObject):
     def handle_queue_operation_completed(self, request_id: str):
         if request_id == self.pending_dispatch_request_id:
             self.pending_dispatch_request_id = None
+            self.prepared_video_id = None
         self._dispatch_next_viewer_track()
 
     @Slot(str, str)
     def handle_queue_operation_failed(self, request_id: str, error: str):
         if request_id == self.pending_dispatch_request_id:
             self.pending_dispatch_request_id = None
+            self.prepared_video_id = None
             self.log_message.emit("warning", f"Queue operation failed: {error}")
 
     def _dispatch_next_viewer_track(self):
@@ -243,6 +251,8 @@ class SongRequestService(QObject):
 
         front = self.viewer_queue[0]
         if self.current_song_video_id and self.current_song_video_id == front.video_id:
+            return
+        if self.prepared_video_id == front.video_id:
             return
 
         current_index, next_video_id = self._get_current_index_and_next_video()
@@ -255,12 +265,14 @@ class SongRequestService(QObject):
             if existing_index != desired_index:
                 request_id = f"dispatch_move_{front.entry_id}"
                 self.pending_dispatch_request_id = request_id
+                self.prepared_video_id = front.video_id
                 self.request_pear_move_index.emit(request_id, existing_index, desired_index)
             return
 
         insert_position = "INSERT_AFTER_CURRENT_VIDEO" if self.current_song_video_id else self.config.song_requests.insert_position
         request_id = f"dispatch_add_{front.entry_id}"
         self.pending_dispatch_request_id = request_id
+        self.prepared_video_id = front.video_id
         self.request_pear_add.emit(request_id, front.video_id, insert_position)
 
     def _send_viewer_queue(self, user_login: str):
@@ -290,6 +302,8 @@ class SongRequestService(QObject):
 
         if position == 1:
             self.pending_dispatch_request_id = None
+            if self.prepared_video_id == entry.video_id:
+                self.prepared_video_id = None
             self._dispatch_next_viewer_track()
 
     def _user_has_active_request(self, user_login: str) -> bool:
