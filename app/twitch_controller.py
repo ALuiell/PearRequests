@@ -79,9 +79,16 @@ class TwitchController(QObject):
             self.log_message.emit("warning", "Bot is already running.")
             return
             
-        token = TwitchCredentialStore.get_token()
+        token, token_status = TwitchCredentialStore.read_token()
         if not token:
-            self.log_message.emit("error", "Cannot start bot: No Twitch token found.")
+            if token_status == "import_failed":
+                self.log_message.emit("error", "Cannot start bot: Twitch token storage is unavailable in this build.")
+            elif token_status == "read_failed":
+                self.log_message.emit("error", "Cannot start bot: Twitch token could not be read from Windows Credential Manager.")
+            elif token_status == "missing":
+                self.log_message.emit("error", "Cannot start bot: No Twitch token found.")
+            else:
+                self.log_message.emit("error", "Cannot start bot: Twitch token is unavailable on this platform.")
             return
 
         channel = self.config.twitch.target_channel or self.config.twitch.username

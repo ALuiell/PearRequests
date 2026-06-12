@@ -17,8 +17,9 @@ echo Running PyInstaller...
 :: --noconfirm: overwrite existing build directories
 :: --onefile: create a single executable file instead of a directory
 :: --windowed: do not provide a console window for standard i/o
+:: --hidden-import / --collect-binaries: ensure pywin32 credential manager modules work inside the EXE
 :: --add-data "SOURCE;DEST": bundle the SVG file so it's available in the final exe
-pyinstaller --noconfirm --onefile --windowed --icon="icon.ico" --add-data "app/ui/checkmark.svg;app/ui" --name "PearSongBot" main.py
+pyinstaller --noconfirm --onefile --windowed --icon="icon.ico" --hidden-import win32cred --hidden-import pywintypes --collect-binaries pywin32_system32 --add-data "app/ui/checkmark.svg;app/ui" --name "PearSongBot" main.py
 
 if %errorlevel% neq 0 (
     echo.
