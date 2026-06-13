@@ -49,6 +49,7 @@ class TwitchController(QObject):
         save_config(self.config)
         self.auth_state_changed.emit(True, login)
         self._cleanup_auth_thread()
+        self.try_auto_connect()
 
     @Slot(str)
     def _on_auth_failed(self, error: str):
@@ -105,6 +106,20 @@ class TwitchController(QObject):
         
         self.irc_thread.started.connect(self.irc_worker.start_connection)
         self.irc_thread.start()
+
+    @Slot()
+    def try_auto_connect(self):
+        if self.irc_thread and self.irc_thread.isRunning():
+            return
+        if not self.config.twitch.username:
+            return
+
+        token, _ = TwitchCredentialStore.read_token()
+        if not token:
+            return
+
+        self.log_message.emit("info", f"Auto-connecting bot for @{self.config.twitch.username}")
+        self.start_bot()
 
     @Slot(str)
     def send_chat_message(self, text: str):

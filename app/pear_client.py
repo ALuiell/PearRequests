@@ -260,6 +260,83 @@ class PearWorker(QObject):
         self.client = PearClient(self.base_url, self.timeout, self.auth_client_id)
         self.check_health()
 
+    def _extract_queue_renderer(self, item: object) -> dict[str, Any]:
+        if not isinstance(item, dict):
+            return {}
+        return (
+            item.get("playlistPanelVideoRenderer")
+            or item.get("playlistPanelVideoWrapperRenderer", {}).get("primaryRenderer", {}).get("playlistPanelVideoRenderer")
+            or {}
+        )
+
+    def _extract_runs_text(self, value: Any) -> str:
+        if isinstance(value, str):
+            return value.strip()
+        if not isinstance(value, dict):
+            return ""
+
+        runs = value.get("runs")
+        if isinstance(runs, list):
+            return "".join(
+                part.get("text", "")
+                for part in runs
+                if isinstance(part, dict)
+            ).strip()
+
+        text = value.get("text")
+        if isinstance(text, str):
+            return text.strip()
+        return ""
+
+    def _build_song_from_renderer(self, renderer: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(renderer, dict):
+            return {}
+
+        song: dict[str, Any] = {}
+        video_id = renderer.get("videoId")
+        if isinstance(video_id, str) and video_id:
+            song["videoId"] = video_id
+
+        title = self._extract_runs_text(renderer.get("title"))
+        if title:
+            song["title"] = title
+
+        artist = self._extract_runs_text(renderer.get("shortBylineText"))
+        if artist:
+            song["artist"] = artist
+            song["author"] = artist
+
+        is_paused = renderer.get("isPaused")
+        if isinstance(is_paused, bool):
+            song["isPaused"] = is_paused
+
+        return song
+
+    def _normalize_current_song(self, queue_data: object, song: object) -> dict[str, Any]:
+        items = queue_data.get("items", []) if isinstance(queue_data, dict) else []
+        selected_renderer: dict[str, Any] = {}
+        for item in items:
+            renderer = self._extract_queue_renderer(item)
+            if renderer.get("selected") is True:
+                selected_renderer = renderer
+                break
+
+        if not selected_renderer:
+            return {}
+
+        normalized = dict(song) if isinstance(song, dict) else {}
+        selected_song = self._build_song_from_renderer(selected_renderer)
+
+        selected_video_id = selected_song.get("videoId")
+        current_video_id = normalized.get("videoId")
+        if selected_video_id and current_video_id and selected_video_id != current_video_id:
+            normalized = {}
+
+        normalized.update({k: v for k, v in selected_song.items() if v})
+        if "isPaused" in selected_song:
+            normalized["isPaused"] = selected_song["isPaused"]
+        return normalized
+
     @Slot()
     def check_health(self):
         if not self._is_running or not self.client: return
@@ -277,16 +354,28 @@ class PearWorker(QObject):
             self.queue_updated.emit(None)
             self.current_song_updated.emit({})
             return
-        self.queue_updated.emit(self.client.get_queue())
+        queue_data = self.client.get_queue()
+        self.queue_updated.emit(queue_data)
         song = self.client.get_current_song()
-        self.current_song_updated.emit(song if song is not None else {})
+        self.current_song_updated.emit(self._normalize_current_song(queue_data, song))
 
     @Slot(str, str, str)
     def add_song_request(self, request_id: str, video_id: str, insert_position: str):
         if not self._is_running or not self.client: return
-        
+
+        current_song = self.client.get_current_song() or {}
+        queue_before = self.client.get_queue() or {}
+        should_autoplay = not isinstance(current_song, dict) or not current_song or not current_song.get("videoId")
+        queue_was_empty = not isinstance(queue_before, dict) or not queue_before.get("items")
+
         result = self.client.add_song(video_id, insert_position)
         if result and result.get("success"):
+            if should_autoplay:
+                if queue_was_empty:
+                    if not self.client.command_next():
+                        logger.warning(f"Added viewer track {video_id} but failed to auto-start playback with next.")
+                elif not self.client.command_play():
+                    logger.warning(f"Added viewer track {video_id} but failed to auto-start playback.")
             self.song_added.emit(request_id, result)
             self.refresh_state()
         else:
@@ -337,8 +426,9 @@ class PearWorker(QObject):
     @Slot(str)
     def request_current_song(self, user_login: str):
         if not self._is_running or not self.client: return
+        queue_data = self.client.get_queue()
         song = self.client.get_current_song()
-        self.current_song_fetched.emit(user_login, song or {})
+        self.current_song_fetched.emit(user_login, self._normalize_current_song(queue_data, song))
 
     @Slot(str)
     def request_skip(self, user_login: str):

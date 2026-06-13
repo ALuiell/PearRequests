@@ -85,6 +85,7 @@ def main():
     # MainWindow
     window = MainWindow(config, twitch_ctrl, pear_worker, song_srv)
     window.show()
+    QTimer.singleShot(0, twitch_ctrl.try_auto_connect)
 
     # Exec loop
     exit_code = app.exec()
