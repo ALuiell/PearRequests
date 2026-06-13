@@ -256,6 +256,13 @@ class MainWindow(QMainWindow):
             p_btn_row.addWidget(btn)
             
         player_card_layout.addLayout(p_btn_row)
+
+        pear_actions_row = QHBoxLayout()
+        pear_actions_row.addStretch()
+        self.btn_pear_resync = QPushButton("Re-sync with Pear")
+        self.btn_pear_resync.setObjectName("TextBtn")
+        pear_actions_row.addWidget(self.btn_pear_resync)
+        player_card_layout.addLayout(pear_actions_row)
         
         queue_lbl = QLabel("UPCOMING IN QUEUE")
         queue_lbl.setStyleSheet("color: #64748B; font-size: 11px; font-weight: bold; margin-top: 10px;")
@@ -438,6 +445,7 @@ class MainWindow(QMainWindow):
         self.btn_pear_play.clicked.connect(self.pear_worker.command_toggle_play)
         self.btn_pear_next.clicked.connect(self.pear_worker.command_next)
         self.btn_pear_clear.clicked.connect(self.pear_worker.command_clear_queue)
+        self.btn_pear_resync.clicked.connect(self.song_srv.command_resync_with_pear)
 
         # Twitch Controller
         self.twitch_ctrl.auth_state_changed.connect(self._on_auth_state_changed)
@@ -616,6 +624,8 @@ class MainWindow(QMainWindow):
             (r"^Failed to move song: .+$", "Pear API: failed to reorder a track."),
             (r"^Failed to search song: .+$", "Pear API: search request failed."),
             (r"^Viewer queue cleared from the dashboard\.$", "Viewer queue: local queue cleared."),
+            (r"^Starting re-sync with Pear\.$", "Pear sync: requesting a fresh queue and current track state."),
+            (r"^Re-synced local queue with Pear\.$", "Pear sync: local queue state refreshed."),
             (r"^Rejected invalid URL from (\w+): .+$", "Request rejected: invalid non-YouTube link from @\\1."),
             (r"^Starting Twitch Pear Song Requests\.\.\.$", "Application started."),
         ]

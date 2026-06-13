@@ -264,13 +264,10 @@ class PearWorker(QObject):
     def check_health(self):
         if not self._is_running or not self.client: return
         is_up = self.client.is_available()
-        if is_up:
-            self.is_connected = True
-            self.state_changed.emit("connected")
-            self.refresh_state()
-        else:
-            self.is_connected = False
-            self.state_changed.emit("unavailable")
+        
+        if is_up != self.is_connected:
+            self.is_connected = is_up
+            self.state_changed.emit("connected" if is_up else "unavailable")
             self.refresh_state()
 
     @Slot()
@@ -356,6 +353,7 @@ class PearWorker(QObject):
         if not self._is_running or not self.client: return
         if self.client.remove_song(index):
             self.action_completed.emit(user_login, f"remove {index}")
+            self.refresh_state()
         else:
             self.action_failed.emit(user_login, "remove", "Pear Desktop is unavailable or returned an error.")
 

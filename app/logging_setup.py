@@ -37,3 +37,6 @@ def setup_logging(log_level: int = logging.INFO) -> None:
     
     # Avoid duplicate logs if setup_logging is called multiple times
     root_logger.propagate = False
+    
+    # Silence httpx INFO logs
+    logging.getLogger("httpx").setLevel(logging.WARNING)

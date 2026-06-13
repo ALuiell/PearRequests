@@ -56,6 +56,7 @@ def main():
     song_srv.request_pear_search.connect(pear_worker.request_search)
     song_srv.request_pear_queue.connect(pear_worker.request_queue)
     song_srv.request_pear_current.connect(pear_worker.request_current_song)
+    song_srv.request_pear_resync.connect(pear_worker.refresh_state)
     song_srv.request_pear_skip.connect(pear_worker.request_skip)
     song_srv.request_pear_remove.connect(pear_worker.request_remove)
     song_srv.request_pear_remove_index.connect(pear_worker.remove_queue_index)

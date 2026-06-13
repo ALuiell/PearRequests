@@ -35,6 +35,7 @@ class SongRequestService(QObject):
     request_pear_search = Signal(str, str) # request_id, query
     request_pear_queue = Signal(str) # user_login
     request_pear_current = Signal(str) # user_login
+    request_pear_resync = Signal()
     request_pear_skip = Signal(str) # user_login
     request_pear_remove = Signal(str, int) # user_login, index
     request_pear_remove_index = Signal(str, int) # request_id, pear_index
@@ -54,6 +55,7 @@ class SongRequestService(QObject):
         self.current_song_video_id: str | None = None
         self.pending_dispatch_request_id: str | None = None
         self.prepared_video_id: str | None = None
+        self.resync_in_progress = False
 
     @Slot(object)
     def handle_chat_message(self, msg: ChatMessage):
@@ -129,8 +131,8 @@ class SongRequestService(QObject):
         self._queue_viewer_track(user_login, video_id, args, artist=artist, title=title)
 
     def _queue_viewer_track(self, user_login: str, video_id: str, label: str, artist: str = "", title: str = ""):
-        if self.config.song_requests.reject_duplicates and self._video_id_is_queued(video_id):
-            self.send_chat_message.emit(f"@{user_login}, this track is already in the viewer queue.")
+        if self.config.song_requests.reject_duplicates and self._video_id_is_known(video_id):
+            self.send_chat_message.emit(f"@{user_login}, this track is already queued or playing.")
             return
 
         if self._user_has_reached_limit(user_login):
@@ -151,7 +153,7 @@ class SongRequestService(QObject):
         self.user_last_success[user_login] = time.monotonic()
 
         position = len(self.viewer_queue)
-        track_display = self._format_track_display(entry)
+        track_display = self._format_track_display(entry, bracketed=True)
         if position == 1:
             self.send_chat_message.emit(f"@{user_login}, added {track_display} to the viewer queue. You're up next.")
         else:
@@ -166,6 +168,8 @@ class SongRequestService(QObject):
             self.pending_dispatch_request_id = None
             self.prepared_video_id = result.get("videoId") or self.prepared_video_id
             self.log_message.emit("debug", f"Dispatched viewer track {result.get('videoId', '')}")
+            # Wait for Pear to publish fresh queue state before dispatching again.
+            return
 
     @Slot(str, str)
     def handle_pear_failure(self, request_id: str, error: str):
@@ -193,6 +197,8 @@ class SongRequestService(QObject):
 
     @Slot(str, object)
     def handle_queue_fetched(self, user_login: str, queue_data: object):
+        if isinstance(queue_data, dict):
+            self.last_queue_data = queue_data
         self._send_viewer_queue(user_login)
 
     @Slot(str, object)
@@ -209,25 +215,36 @@ class SongRequestService(QObject):
         artist = song.get("artist", "")
         self.send_chat_message.emit(f"@{user_login}, currently playing: {artist} - {title}")
 
+    @Slot()
+    def command_resync_with_pear(self):
+        self.pending_dispatch_request_id = None
+        self.prepared_video_id = None
+        self.last_queue_data = None
+        self.current_song_video_id = None
+        self.resync_in_progress = True
+        self.log_message.emit("info", "Starting re-sync with Pear.")
+        self.request_pear_resync.emit()
+
     @Slot(object)
     def observe_queue_updated(self, queue_data: object):
         self.last_queue_data = queue_data if isinstance(queue_data, dict) else None
         if self.prepared_video_id and self._find_video_index_in_pear_queue(self.prepared_video_id) is not None:
             self.prepared_video_id = None
+        if self.resync_in_progress:
+            return
         self._dispatch_next_viewer_track()
 
     @Slot(dict)
     def observe_current_song_updated(self, song: dict):
-        previous_video_id = self.current_song_video_id
         self.current_song_video_id = song.get("videoId") if song else None
 
-        if self.viewer_queue and self.current_song_video_id and self.current_song_video_id != previous_video_id:
-            if self.viewer_queue[0].video_id == self.current_song_video_id:
-                started = self.viewer_queue.pop(0)
-                if self.prepared_video_id == started.video_id:
-                    self.prepared_video_id = None
-                self.log_message.emit("info", f"Viewer track started: {started.video_id} for {started.user_login}")
+        self._reconcile_front_with_current_song()
 
+        if self.resync_in_progress:
+            self.resync_in_progress = False
+            self.log_message.emit("info", "Re-synced local queue with Pear.")
+            self._dispatch_next_viewer_track()
+            return
         self._dispatch_next_viewer_track()
 
     @Slot(str, str)
@@ -248,7 +265,9 @@ class SongRequestService(QObject):
     def handle_queue_operation_completed(self, request_id: str):
         if request_id == self.pending_dispatch_request_id:
             self.pending_dispatch_request_id = None
-            self.prepared_video_id = None
+            # Keep the prepared marker until Pear sends fresh queue state.
+            # Otherwise we can re-dispatch the same move/add against stale queue data.
+            return
         self._dispatch_next_viewer_track()
 
     @Slot(str, str)
@@ -264,6 +283,9 @@ class SongRequestService(QObject):
         self.pending_searches.clear()
         self.pending_dispatch_request_id = None
         self.prepared_video_id = None
+        self.resync_in_progress = False
+        self.last_queue_data = None
+        self.current_song_video_id = None
         self.log_message.emit("info", "Viewer queue cleared from the dashboard.")
 
     def _dispatch_next_viewer_track(self):
@@ -303,9 +325,7 @@ class SongRequestService(QObject):
 
         preview = []
         for index, entry in enumerate(self.viewer_queue[:3], start=1):
-            label = self._format_track_display(entry)
-            if len(label) > 30:
-                label = label[:27] + "..."
+            label = self._format_queue_preview(entry)
             preview.append(f"{index}. {label}")
         self.send_chat_message.emit(f"@{user_login}, viewer queue: {' | '.join(preview)}")
 
@@ -347,12 +367,38 @@ class SongRequestService(QObject):
     def _video_id_is_queued(self, video_id: str) -> bool:
         return any(entry.video_id == video_id for entry in self.viewer_queue)
 
-    def _format_track_display(self, entry: ViewerQueueEntry) -> str:
+    def _video_id_is_known(self, video_id: str) -> bool:
+        if self._video_id_is_queued(video_id):
+            return True
+        if self.current_song_video_id == video_id:
+            return True
+        return self._find_video_index_in_pear_queue(video_id) is not None
+
+    def _reconcile_front_with_current_song(self):
+        if not self.viewer_queue or not self.current_song_video_id:
+            return
+        if self.viewer_queue[0].video_id != self.current_song_video_id:
+            return
+
+        started = self.viewer_queue.pop(0)
+        if self.prepared_video_id == started.video_id:
+            self.prepared_video_id = None
+        self.log_message.emit("info", f"Viewer track started: {started.video_id} for {started.user_login}")
+
+    def _format_track_display(self, entry: ViewerQueueEntry, bracketed: bool = False) -> str:
         if entry.artist and entry.title:
-            return f"{entry.artist}: {entry.title}"
-        if entry.title:
-            return entry.title
-        return entry.label
+            display = f"{entry.artist} - {entry.title}"
+        elif entry.title:
+            display = entry.title
+        else:
+            display = entry.label
+        return f"[{display}]" if bracketed else display
+
+    def _format_queue_preview(self, entry: ViewerQueueEntry) -> str:
+        label = f"{entry.user_login} - {self._format_track_display(entry)}"
+        if len(label) > 42:
+            label = label[:39] + "..."
+        return label
 
     def _resolve_youtube_metadata(self, value: str, video_id: str) -> tuple[str, str]:
         if not self._looks_like_url(value):
